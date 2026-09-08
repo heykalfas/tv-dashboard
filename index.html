@@ -229,6 +229,38 @@
   .sp-play:hover{ background:var(--text); opacity:0.9; }
   .sp-volume{ width:90px; accent-color:var(--spotify); flex-shrink:0; }
   .plbtns{ display:flex; gap:8px; flex-shrink:0; margin-left:auto; }
+  .sp-logout{
+    background:transparent; border:1px solid var(--line); color:var(--text-dim);
+    width:32px; height:32px; border-radius:50%; cursor:pointer; font-size:14px; flex-shrink:0;
+  }
+  .sp-logout:hover{ background:var(--surface-alt); }
+
+  .libOverlay{
+    display:none; position:fixed; inset:0; background:rgba(6,9,12,0.8);
+    z-index:2000; align-items:center; justify-content:center;
+  }
+  .libOverlay.show{ display:flex; }
+  .libPanel{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    width:720px; max-width:90vw; max-height:74vh; padding:22px; display:flex; flex-direction:column;
+  }
+  .libHead{
+    display:flex; justify-content:space-between; align-items:center;
+    font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:600;
+    margin-bottom:16px;
+  }
+  .libClose{ background:transparent; border:none; color:var(--text-dim); font-size:16px; cursor:pointer; }
+  .libGrid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(130px,1fr));
+    gap:14px; overflow-y:auto;
+  }
+  .libItem{ cursor:pointer; text-align:left; }
+  .libItem img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:var(--surface-alt); display:block; }
+  .libItem .libName{
+    margin-top:8px; font-size:13px; font-weight:500;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .libLoading{ color:var(--text-dim); font-size:14px; grid-column:1/-1; }
   .plbtn{
     background:transparent; border:1px solid var(--line); color:var(--text-dim);
     font-family:'Inter',sans-serif; font-size:12px; font-weight:500;
@@ -328,7 +360,19 @@
       <div class="plbtns">
         <button class="plbtn active" id="pl-1" onclick="playPlaylistBtn(1)">Playlist 1</button>
         <button class="plbtn" id="pl-2" onclick="playPlaylistBtn(2)">Playlist 2</button>
+        <button class="plbtn" onclick="openLibrary()">Your Library</button>
       </div>
+      <button class="sp-logout" onclick="spotifyLogout()" title="Log out of Spotify">⎋</button>
+    </div>
+  </div>
+
+  <div class="libOverlay" id="libOverlay">
+    <div class="libPanel">
+      <div class="libHead">
+        <span>Your playlists</span>
+        <button class="libClose" onclick="closeLibrary()">✕</button>
+      </div>
+      <div class="libGrid" id="libGrid"><div class="libLoading">Loading your playlists…</div></div>
     </div>
   </div>
 
@@ -350,7 +394,7 @@
   // ---------------- Spotify (PKCE + Web Playback SDK) ----------------
   const SPOTIFY_CLIENT_ID = '66ad386fa07a47ab8c4a4be65e84afa5';
   const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
-  const SPOTIFY_SCOPES = 'streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state';
+  const SPOTIFY_SCOPES = 'streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state playlist-read-private playlist-read-collaborative';
   const playlists = {
     1: "7w4hFg3PuhhSUH42ypv2eS",
     2: "3C64V048fGyQfCjmu9TIGA"
@@ -457,16 +501,53 @@
   async function togglePlay(){ if(player) await player.togglePlay(); }
   async function setVolume(v){ if(player) await player.setVolume(v/100); }
 
-  async function playPlaylistBtn(n){
+  async function playContext(uri){
     if(!deviceId) return;
     const token = await getValidToken();
     await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
       method:'PUT',
       headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json' },
-      body: JSON.stringify({ context_uri:`spotify:playlist:${playlists[n]}` })
+      body: JSON.stringify({ context_uri: uri })
     });
+  }
+
+  async function playPlaylistBtn(n){
+    await playContext(`spotify:playlist:${playlists[n]}`);
     document.getElementById('pl-1').classList.toggle('active', n===1);
     document.getElementById('pl-2').classList.toggle('active', n===2);
+  }
+
+  async function openLibrary(){
+    document.getElementById('libOverlay').classList.add('show');
+    const grid = document.getElementById('libGrid');
+    grid.innerHTML = '<div class="libLoading">Loading your playlists…</div>';
+    try{
+      const token = await getValidToken();
+      const res = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {
+        headers:{ 'Authorization':`Bearer ${token}` }
+      });
+      const data = await res.json();
+      if(!data.items || data.items.length===0){
+        grid.innerHTML = '<div class="libLoading">No playlists found on this account.</div>';
+        return;
+      }
+      grid.innerHTML = '';
+      data.items.forEach(pl=>{
+        const art = pl.images?.[0]?.url || '';
+        const item = document.createElement('div');
+        item.className = 'libItem';
+        item.innerHTML = `<img src="${art}" alt=""><div class="libName">${pl.name}</div>`;
+        item.onclick = () => { playContext(pl.uri); closeLibrary(); document.getElementById('pl-1').classList.remove('active'); document.getElementById('pl-2').classList.remove('active'); };
+        grid.appendChild(item);
+      });
+    }catch(e){
+      grid.innerHTML = '<div class="libLoading">Couldn\'t load your library. Try logging out and back in.</div>';
+    }
+  }
+  function closeLibrary(){ document.getElementById('libOverlay').classList.remove('show'); }
+  function spotifyLogout(){
+    ['sp_access_token','sp_refresh_token','sp_expires_at','sp_verifier'].forEach(k=>localStorage.removeItem(k));
+    location.reload();
   }
 
   (async function initSpotifyAuth(){
@@ -628,8 +709,9 @@
       const frames = d.radar.past.slice(-6);
       radarLayers.forEach(l=>map.removeLayer(l));
       radarLayers = frames.map(f =>
-        L.tileLayer(`${d.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane'})
+        L.tileLayer(`${d.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane', maxNativeZoom:9})
       );
+      radarLayers.forEach(l => l.on('tileerror', e => { e.tile.style.opacity = 0; }));
       radarLayers.forEach(l=>l.addTo(map));
       radarFrameIdx = radarLayers.length-1;
       showRadarFrame();
