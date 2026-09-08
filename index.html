@@ -19,6 +19,7 @@
     --cyan: #4FB8C9;
     --green: #6FBF8B;
     --orange: #D9714E;
+    --spotify: #1DB954;
   }
   *{box-sizing:border-box;}
   html,body{
@@ -112,6 +113,11 @@
   .toggle.active{ background:var(--amber); color:#241704; border-color:var(--amber); }
   .toggle.active.traffic{ background:var(--cyan); color:#08292d; border-color:var(--cyan); }
   #map{ width:100%; height:100%; background:#0B1015; }
+  .leaflet-control-attribution{
+    background:rgba(15,21,28,0.75) !important; color:var(--text-dim) !important;
+    font-size:10px !important; border-radius:6px 0 0 0 !important;
+  }
+  .leaflet-control-attribution a{ color:var(--text-dim) !important; }
   .maplegend{
     position:absolute; bottom:14px; left:14px; z-index:500;
     background:rgba(15,21,28,0.85); border:1px solid var(--line);
@@ -200,8 +206,29 @@
   .footer .ficon{
     font-size:20px; color:var(--green); flex-shrink:0;
   }
-  .footer iframe{ border-radius:8px; flex:1; height:80px; }
-  .plbtns{ display:flex; gap:8px; flex-shrink:0; }
+  .spotify-login{ display:flex; align-items:center; gap:14px; width:100%; }
+  .loginbtn{
+    background:var(--spotify); color:#04240f; border:none;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:14px;
+    padding:11px 22px; border-radius:24px; cursor:pointer;
+  }
+  .loginhint{ font-size:12px; color:var(--text-dim); }
+  .spotify-player{ display:flex; align-items:center; gap:16px; width:100%; }
+  .sp-art{ width:52px; height:52px; border-radius:6px; background:var(--surface-alt); object-fit:cover; flex-shrink:0; }
+  .sp-meta{ min-width:0; width:150px; flex-shrink:0; }
+  .sp-title{ font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sp-artist{ font-size:12px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .sp-controls{ display:flex; align-items:center; gap:10px; flex-shrink:0; }
+  .sp-btn{
+    background:transparent; border:none; color:var(--text);
+    font-size:16px; cursor:pointer; width:34px; height:34px;
+    border-radius:50%; display:flex; align-items:center; justify-content:center;
+  }
+  .sp-btn:hover{ background:var(--surface-alt); }
+  .sp-play{ background:var(--text); color:var(--bg); font-size:13px; }
+  .sp-play:hover{ background:var(--text); opacity:0.9; }
+  .sp-volume{ width:90px; accent-color:var(--spotify); flex-shrink:0; }
+  .plbtns{ display:flex; gap:8px; flex-shrink:0; margin-left:auto; }
   .plbtn{
     background:transparent; border:1px solid var(--line); color:var(--text-dim);
     font-family:'Inter',sans-serif; font-size:12px; font-weight:500;
@@ -282,17 +309,32 @@
   </div>
 
   <div class="panel footer">
-    <div class="ficon">♪</div>
-    <iframe id="spotify-frame" src="https://open.spotify.com/embed/playlist/7w4hFg3PuhhSUH42ypv2eS?utm_source=generator&theme=0"
-      frameborder="0" allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>
-    <div class="plbtns">
-      <button class="plbtn active" id="pl-1" onclick="setPlaylist(1)">Playlist 1</button>
-      <button class="plbtn" id="pl-2" onclick="setPlaylist(2)">Playlist 2</button>
+    <div id="spotify-login" class="spotify-login">
+      <button class="loginbtn" onclick="redirectToSpotifyLogin()">Log in with Spotify</button>
+      <span class="loginhint" id="loginhint"></span>
+    </div>
+    <div id="spotify-player" class="spotify-player" style="display:none;">
+      <img id="sp-art" class="sp-art" alt="">
+      <div class="sp-meta">
+        <div class="sp-title" id="sp-title">Nothing playing</div>
+        <div class="sp-artist" id="sp-artist">Pick a playlist to start</div>
+      </div>
+      <div class="sp-controls">
+        <button class="sp-btn" onclick="player&&player.previousTrack()">⏮</button>
+        <button class="sp-btn sp-play" id="sp-playbtn" onclick="togglePlay()">▶</button>
+        <button class="sp-btn" onclick="player&&player.nextTrack()">⏭</button>
+      </div>
+      <input type="range" id="sp-volume" class="sp-volume" min="0" max="100" value="60" oninput="setVolume(this.value)">
+      <div class="plbtns">
+        <button class="plbtn active" id="pl-1" onclick="playPlaylistBtn(1)">Playlist 1</button>
+        <button class="plbtn" id="pl-2" onclick="playPlaylistBtn(2)">Playlist 2</button>
+      </div>
     </div>
   </div>
 
 </div>
 
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
   const LAT = 38.9676, LON = -104.7211;
@@ -305,16 +347,138 @@
   }
   tick(); setInterval(tick, 1000);
 
-  // ---------------- playlists ----------------
+  // ---------------- Spotify (PKCE + Web Playback SDK) ----------------
+  const SPOTIFY_CLIENT_ID = '66ad386fa07a47ab8c4a4be65e84afa5';
+  const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
+  const SPOTIFY_SCOPES = 'streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state';
   const playlists = {
     1: "7w4hFg3PuhhSUH42ypv2eS",
     2: "3C64V048fGyQfCjmu9TIGA"
   };
-  function setPlaylist(n){
-    document.getElementById('spotify-frame').src = `https://open.spotify.com/embed/playlist/${playlists[n]}?utm_source=generator&theme=0`;
+
+  let sdkReady = false;
+  let player = null;
+  let deviceId = null;
+
+  function randomString(len){
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let out = '';
+    const rand = crypto.getRandomValues(new Uint8Array(len));
+    for(let i=0;i<len;i++) out += chars[rand[i] % chars.length];
+    return out;
+  }
+  async function sha256base64url(plain){
+    const data = new TextEncoder().encode(plain);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+
+  async function redirectToSpotifyLogin(){
+    const verifier = randomString(64);
+    localStorage.setItem('sp_verifier', verifier);
+    const challenge = await sha256base64url(verifier);
+    const params = new URLSearchParams({
+      client_id: SPOTIFY_CLIENT_ID, response_type:'code', redirect_uri: SPOTIFY_REDIRECT_URI,
+      scope: SPOTIFY_SCOPES, code_challenge_method:'S256', code_challenge: challenge
+    });
+    window.location = `https://accounts.spotify.com/authorize?${params.toString()}`;
+  }
+
+  function saveTokenData(data){
+    localStorage.setItem('sp_access_token', data.access_token);
+    if(data.refresh_token) localStorage.setItem('sp_refresh_token', data.refresh_token);
+    localStorage.setItem('sp_expires_at', String(Date.now() + data.expires_in*1000));
+  }
+
+  async function exchangeCodeForToken(code){
+    const verifier = localStorage.getItem('sp_verifier');
+    const params = new URLSearchParams({
+      client_id: SPOTIFY_CLIENT_ID, grant_type:'authorization_code', code,
+      redirect_uri: SPOTIFY_REDIRECT_URI, code_verifier: verifier
+    });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: params
+    });
+    const data = await res.json();
+    if(data.access_token) saveTokenData(data);
+    return data.access_token || null;
+  }
+
+  async function refreshAccessToken(){
+    const refresh = localStorage.getItem('sp_refresh_token');
+    if(!refresh) return null;
+    const params = new URLSearchParams({ client_id: SPOTIFY_CLIENT_ID, grant_type:'refresh_token', refresh_token: refresh });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: params
+    });
+    const data = await res.json();
+    if(data.access_token){ saveTokenData(data); return data.access_token; }
+    return null;
+  }
+
+  async function getValidToken(){
+    const expiresAt = parseInt(localStorage.getItem('sp_expires_at')||'0');
+    if(Date.now() < expiresAt - 60000) return localStorage.getItem('sp_access_token');
+    return await refreshAccessToken();
+  }
+
+  function showPlayerUI(){
+    document.getElementById('spotify-login').style.display = 'none';
+    document.getElementById('spotify-player').style.display = 'flex';
+  }
+
+  function maybeInitPlayer(){
+    if(!sdkReady || player) return;
+    if(!localStorage.getItem('sp_access_token')) return;
+    player = new Spotify.Player({
+      name: 'TV Dashboard',
+      getOAuthToken: cb => { getValidToken().then(t => cb(t)); },
+      volume: 0.6
+    });
+    player.addListener('ready', ({device_id}) => { deviceId = device_id; showPlayerUI(); });
+    player.addListener('not_ready', () => { deviceId = null; });
+    player.addListener('player_state_changed', state => { if(state) updateNowPlaying(state); });
+    player.addListener('initialization_error', ({message}) => { document.getElementById('loginhint').textContent = message; });
+    player.addListener('authentication_error', ({message}) => { document.getElementById('loginhint').textContent = 'Login expired, please log in again.'; localStorage.removeItem('sp_access_token'); });
+    player.addListener('account_error', ({message}) => { document.getElementById('loginhint').textContent = 'Spotify Premium is required for playback.'; });
+    player.connect();
+  }
+  window.onSpotifyWebPlaybackSDKReady = () => { sdkReady = true; maybeInitPlayer(); };
+
+  function updateNowPlaying(state){
+    const track = state.track_window.current_track;
+    document.getElementById('sp-title').textContent = track.name;
+    document.getElementById('sp-artist').textContent = track.artists.map(a=>a.name).join(', ');
+    document.getElementById('sp-art').src = track.album.images[0]?.url || '';
+    document.getElementById('sp-playbtn').textContent = state.paused ? '▶' : '⏸';
+  }
+
+  async function togglePlay(){ if(player) await player.togglePlay(); }
+  async function setVolume(v){ if(player) await player.setVolume(v/100); }
+
+  async function playPlaylistBtn(n){
+    if(!deviceId) return;
+    const token = await getValidToken();
+    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method:'PUT',
+      headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json' },
+      body: JSON.stringify({ context_uri:`spotify:playlist:${playlists[n]}` })
+    });
     document.getElementById('pl-1').classList.toggle('active', n===1);
     document.getElementById('pl-2').classList.toggle('active', n===2);
   }
+
+  (async function initSpotifyAuth(){
+    const params = new URLSearchParams(window.location.search);
+    if(params.has('code')){
+      await exchangeCodeForToken(params.get('code'));
+      window.history.replaceState({}, document.title, SPOTIFY_REDIRECT_URI);
+    }
+    if(localStorage.getItem('sp_access_token') || localStorage.getItem('sp_refresh_token')){
+      maybeInitPlayer();
+    }
+  })();
 
   // ---------------- weather ----------------
   const weatherCodes = {
@@ -434,9 +598,19 @@
   setInterval(loadAirQuality, 10*60*1000);
 
   // ---------------- map ----------------
-  const map = L.map('map', {zoomControl:false, attributionControl:false, minZoom:3, maxZoom:11}).setView([LAT, LON], 8);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd', maxZoom: 20
+  const map = L.map('map', {zoomControl:false, attributionControl:true, minZoom:3, maxZoom:16}).setView([LAT, LON], 8);
+  map.attributionControl.setPrefix(false);
+
+  map.createPane('basePane');
+  map.getPane('basePane').style.zIndex = 200;
+  map.getPane('basePane').style.filter = 'invert(93%) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.7)';
+
+  map.createPane('radarPane');
+  map.getPane('radarPane').style.zIndex = 300;
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    subdomains: 'abc', maxZoom: 19, pane: 'basePane',
+    attribution: '© OpenStreetMap'
   }).addTo(map);
   L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
 
@@ -454,7 +628,7 @@
       const frames = d.radar.past.slice(-6);
       radarLayers.forEach(l=>map.removeLayer(l));
       radarLayers = frames.map(f =>
-        L.tileLayer(`${d.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {opacity:0, zIndex:400})
+        L.tileLayer(`${d.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane'})
       );
       radarLayers.forEach(l=>l.addTo(map));
       radarFrameIdx = radarLayers.length-1;
