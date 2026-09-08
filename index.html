@@ -704,14 +704,18 @@
 
   async function setupRadar(){
     try{
-      const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-      const d = await res.json();
-      const frames = d.radar.past.slice(-6);
       radarLayers.forEach(l=>map.removeLayer(l));
-      radarLayers = frames.map(f =>
-        L.tileLayer(`${d.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane', maxNativeZoom:9})
-      );
-      radarLayers.forEach(l => l.on('tileerror', e => { e.tile.style.opacity = 0; }));
+      const now = new Date();
+      const times = [];
+      for(let i=5;i>=0;i--){
+        const t = new Date(now.getTime() - i*10*60000);
+        t.setUTCSeconds(0,0);
+        t.setUTCMinutes(Math.floor(t.getUTCMinutes()/5)*5);
+        times.push(t.toISOString().replace(/\.\d+Z$/,'Z'));
+      }
+      radarLayers = times.map(t => L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi', {
+        layers:'nexrad-n0r-wmst', format:'image/png', transparent:true, opacity:0, pane:'radarPane', time:t, version:'1.1.1'
+      }));
       radarLayers.forEach(l=>l.addTo(map));
       radarFrameIdx = radarLayers.length-1;
       showRadarFrame();
@@ -719,7 +723,7 @@
       radarTimer = setInterval(()=>{
         radarFrameIdx = (radarFrameIdx+1) % radarLayers.length;
         showRadarFrame();
-      }, 600);
+      }, 700);
     }catch(e){
       document.getElementById('legend').textContent = 'Radar unavailable';
     }
