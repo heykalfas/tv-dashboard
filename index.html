@@ -164,23 +164,24 @@
   .windrow{ display:flex; align-items:center; gap:14px; }
 
   /* ---------- forecast panel ---------- */
-  .forecast{ grid-area: forecast; flex-direction:row; gap:0; padding:16px 0; }
-  .forecast .hourly{
-    flex:1.7; display:flex; gap:4px; overflow-x:auto;
+  .forecast{ grid-area: forecast; flex-direction:row; gap:0; padding:14px 0; }
+  .hourly-wrap{
+    flex:1.7; display:flex; flex-direction:column; min-width:0;
     padding:0 18px; border-right:1px solid var(--line);
   }
+  .hourly-wrap h2, .daily-wrap h2{ margin:0 0 8px 0; }
+  .forecast .hourly{ display:flex; gap:4px; overflow-x:auto; }
   .forecast .hourly::-webkit-scrollbar{ height:0; }
   .hchip{
     flex:0 0 auto; width:58px; text-align:center;
-    display:flex; flex-direction:column; align-items:center; gap:6px;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
   }
   .hchip .hr{ font-size:12px; color:var(--text-dim); }
   .hchip .hc{ font-size:16px; }
   .hchip .ht{ font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:16px; }
-  .forecast .daily{
-    flex:1; display:flex; gap:16px; overflow-x:auto;
-    padding:0 18px; align-items:center;
-  }
+  .hchip .hp{ font-size:11px; color:var(--cyan); min-height:14px; }
+  .daily-wrap{ flex:1; display:flex; flex-direction:column; min-width:0; padding:0 18px; }
+  .forecast .daily{ display:flex; gap:16px; overflow-x:auto; align-items:center; }
   .forecast .daily::-webkit-scrollbar{ height:0; }
   .dchip{
     flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px; width:56px;
@@ -270,8 +271,14 @@
   </div>
 
   <div class="panel forecast">
-    <div class="hourly" id="hourly"></div>
-    <div class="daily" id="daily"></div>
+    <div class="hourly-wrap">
+      <h2>Hourly</h2>
+      <div class="hourly" id="hourly"></div>
+    </div>
+    <div class="daily-wrap">
+      <h2>7-day</h2>
+      <div class="daily" id="daily"></div>
+    </div>
   </div>
 
   <div class="panel footer">
@@ -339,7 +346,7 @@
 
   async function loadWeather(){
     try{
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&hourly=temperature_2m,weather_code&daily=uv_index_max,weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&hourly=temperature_2m,weather_code,precipitation_probability&daily=uv_index_max,weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
       const res = await fetch(url);
       const d = await res.json();
       const c = d.current;
@@ -374,9 +381,10 @@
         const hr = new Date(t).toLocaleTimeString([], {hour:'numeric'});
         const temp = Math.round(d.hourly.temperature_2m[startIdx+i]);
         const icon = weatherIcons[d.hourly.weather_code[startIdx+i]] || "•";
+        const precip = d.hourly.precipitation_probability[startIdx+i];
         const chip = document.createElement('div');
         chip.className = 'hchip';
-        chip.innerHTML = `<div class="hr">${i===0?'Now':hr}</div><div class="hc">${icon}</div><div class="ht">${temp}°</div>`;
+        chip.innerHTML = `<div class="hr">${i===0?'Now':hr}</div><div class="hc">${icon}</div><div class="ht">${temp}°</div><div class="hp">${precip>0?precip+'%':''}</div>`;
         hourly.appendChild(chip);
       });
 
@@ -427,8 +435,8 @@
 
   // ---------------- map ----------------
   const map = L.map('map', {zoomControl:false, attributionControl:false, minZoom:3, maxZoom:11}).setView([LAT, LON], 8);
-  L.tileLayer('https://basemaps.cartocdn.com/dark_matter/{z}/{x}/{y}.png', {
-    maxZoom: 11, minZoom: 3
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 20
   }).addTo(map);
   L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
 
