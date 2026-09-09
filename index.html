@@ -330,6 +330,7 @@
       display:grid; grid-template-columns:1fr 1fr; gap:12px;
     }
     .side .stat{ flex:none; }
+    .side .stat.conditions{ grid-column: 1 / -1; }
     .stat .big{ font-size:26px; }
 
     .forecast{ flex-direction:column; gap:14px; padding:14px; }
@@ -738,7 +739,7 @@
       document.getElementById('feels').textContent = Math.round(c.apparent_temperature) + '°F';
       document.getElementById('humidity').textContent = Math.round(c.relative_humidity_2m) + '%';
       document.getElementById('gusts').textContent = Math.round(c.wind_gusts_10m) + ' mph';
-      document.getElementById('pressure').textContent = (c.pressure_msl * 0.02953).toFixed(2) + ' inHg';
+      document.getElementById('pressure').textContent = (c.pressure_msl * 0.02953).toFixed(1) + ' inHg';
       document.getElementById('dewpoint').textContent = Math.round(c.dew_point_2m) + '°F';
       document.getElementById('sunrise').textContent = new Date(d.daily.sunrise[0]).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
       document.getElementById('sunset').textContent = new Date(d.daily.sunset[0]).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
