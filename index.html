@@ -51,6 +51,17 @@
     font-size:22px; font-weight:600; letter-spacing:0.2px;
   }
   .place span{ color:var(--text-dim); font-weight:500; font-size:16px; margin-left:8px;}
+  .searchbar{ display:flex; gap:8px; align-items:center; }
+  .searchbar input{
+    background:var(--surface); border:1px solid var(--line); color:var(--text);
+    font-family:'Inter',sans-serif; font-size:13px; padding:8px 14px;
+    border-radius:20px; width:170px; outline:none;
+  }
+  .searchbar input::placeholder{ color:var(--text-dim); }
+  .searchbar button{
+    background:var(--amber); color:#241704; border:none; font-weight:600;
+    font-size:13px; padding:8px 16px; border-radius:20px; cursor:pointer;
+  }
   .clock{
     font-family:'Space Grotesk',sans-serif;
     font-size:22px; font-weight:600; color:var(--amber);
@@ -93,6 +104,21 @@
   .now .row .k{ color:var(--text-dim); }
   .now .row .v{ font-weight:500; }
   .now .updated{ margin-top:auto; padding-top:14px; font-size:11px; color:var(--text-dim); }
+
+  .alertbanner{
+    background:rgba(217,113,78,0.15); border:1px solid var(--orange);
+    border-radius:8px; padding:10px 12px; margin-bottom:14px; cursor:pointer;
+  }
+  .alertbanner-head{
+    display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--orange);
+  }
+  .alertbanner-head span:last-child{
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .alertbanner-detail{
+    display:none; font-size:12px; color:var(--text-dim); margin-top:8px; line-height:1.5;
+  }
+  .alertbanner.open .alertbanner-detail{ display:block; }
 
   /* ---------- map panel ---------- */
   .mapwrap{ grid-area: map; padding:0; overflow:hidden; position:relative; }
@@ -287,17 +313,28 @@
 <div class="app">
 
   <div class="header">
-    <div class="place">Colorado Springs, CO 80924</div>
+    <div class="place" id="place">Colorado Springs, CO 80924</div>
+    <div class="searchbar">
+      <input id="zipinput" type="text" inputmode="numeric" placeholder="Change ZIP code" maxlength="10">
+      <button onclick="searchZip()">Go</button>
+    </div>
     <div class="clock"><span class="date" id="date"></span><span id="time">--:--</span></div>
   </div>
 
   <div class="panel now">
     <h2>Right now</h2>
+    <div class="alertbanner" id="alertbanner" style="display:none;" onclick="toggleAlertDetail()">
+      <div class="alertbanner-head"><span id="alertIcon">⚠</span><span id="alertHeadline">—</span></div>
+      <div class="alertbanner-detail" id="alertDetail"></div>
+    </div>
     <div class="temp" id="temp">--°</div>
     <div class="cond" id="cond">Loading conditions…</div>
     <div class="row"><span class="k">Feels like</span><span class="v" id="feels">--</span></div>
     <div class="row"><span class="k">Humidity</span><span class="v" id="humidity">--</span></div>
     <div class="row"><span class="k">Wind gusts</span><span class="v" id="gusts">--</span></div>
+    <div class="row"><span class="k">Sunrise</span><span class="v" id="sunrise">--</span></div>
+    <div class="row"><span class="k">Sunset</span><span class="v" id="sunset">--</span></div>
+    <div class="row"><span class="k">Moon</span><span class="v" id="moon">--</span></div>
     <div class="updated" id="updated">Updating…</div>
   </div>
 
@@ -340,6 +377,11 @@
       <div class="big"><span id="aqi">--</span><span class="unit">US AQI</span></div>
       <span class="tag" id="aqitag">--</span>
       <div class="bar"><i id="aqibar" style="width:0%; background:var(--green);"></i></div>
+    </div>
+    <div class="panel stat conditions">
+      <h2>Conditions</h2>
+      <div class="row"><span class="k">Pressure</span><span class="v" id="pressure">--</span></div>
+      <div class="row"><span class="k">Dew point</span><span class="v" id="dewpoint">--</span></div>
     </div>
   </div>
 
@@ -395,7 +437,37 @@
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-  const LAT = 38.9676, LON = -104.7211;
+  let LAT = parseFloat(localStorage.getItem('dash_lat')) || 38.9676;
+  let LON = parseFloat(localStorage.getItem('dash_lon')) || -104.7211;
+  document.getElementById('place').textContent = localStorage.getItem('dash_place') || 'Colorado Springs, CO 80924';
+
+  async function searchZip(){
+    const raw = document.getElementById('zipinput').value.trim();
+    if(!/^\d{5}$/.test(raw)){
+      document.getElementById('zipinput').placeholder = 'Enter a 5-digit ZIP';
+      return;
+    }
+    try{
+      const res = await fetch(`https://api.zippopotam.us/us/${raw}`);
+      if(!res.ok) throw new Error('not found');
+      const data = await res.json();
+      const p = data.places[0];
+      LAT = parseFloat(p.latitude);
+      LON = parseFloat(p.longitude);
+      const label = `${p['place name']}, ${p['state abbreviation']} ${raw}`;
+      document.getElementById('place').textContent = label;
+      document.getElementById('zipinput').value = '';
+      localStorage.setItem('dash_lat', LAT);
+      localStorage.setItem('dash_lon', LON);
+      localStorage.setItem('dash_place', label);
+      map.setView([LAT, LON], map.getZoom());
+      homeMarker.setLatLng([LAT, LON]);
+      loadWeather(); loadAirQuality(); loadAlerts();
+      if(mode==='traffic') loadTraffic();
+    }catch(e){
+      document.getElementById('zipinput').placeholder = 'ZIP not found, try again';
+    }
+  }
 
   // ---------------- clock ----------------
   function tick(){
@@ -605,7 +677,7 @@
 
   async function loadWeather(){
     try{
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&hourly=temperature_2m,weather_code,precipitation_probability&daily=uv_index_max,weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,dew_point_2m&hourly=temperature_2m,weather_code,precipitation_probability&daily=uv_index_max,weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`;
       const res = await fetch(url);
       const d = await res.json();
       const c = d.current;
@@ -614,6 +686,12 @@
       document.getElementById('feels').textContent = Math.round(c.apparent_temperature) + '°F';
       document.getElementById('humidity').textContent = Math.round(c.relative_humidity_2m) + '%';
       document.getElementById('gusts').textContent = Math.round(c.wind_gusts_10m) + ' mph';
+      document.getElementById('pressure').textContent = (c.pressure_msl * 0.02953).toFixed(2) + ' inHg';
+      document.getElementById('dewpoint').textContent = Math.round(c.dew_point_2m) + '°F';
+      document.getElementById('sunrise').textContent = new Date(d.daily.sunrise[0]).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+      document.getElementById('sunset').textContent = new Date(d.daily.sunset[0]).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+      const moon = getMoonPhase(new Date());
+      document.getElementById('moon').textContent = `${moon.emoji} ${moon.name}`;
       document.getElementById('windspeed').textContent = Math.round(c.wind_speed_10m);
       document.getElementById('winddir').textContent = compass(c.wind_direction_10m) + ' · ' + Math.round(c.wind_direction_10m) + '°';
       document.getElementById('windarrow').style.transform = `rotate(${c.wind_direction_10m}deg)`;
@@ -636,7 +714,7 @@
       const startIdx = d.hourly.time.findIndex(t => t >= c.time);
       const hourly = document.getElementById('hourly');
       hourly.innerHTML = '';
-      d.hourly.time.slice(startIdx, startIdx+24).forEach((t,i)=>{
+      d.hourly.time.slice(startIdx, startIdx+12).forEach((t,i)=>{
         const hr = new Date(t).toLocaleTimeString([], {hour:'numeric'});
         const temp = Math.round(d.hourly.temperature_2m[startIdx+i]);
         const icon = weatherIcons[d.hourly.weather_code[startIdx+i]] || "•";
@@ -688,9 +766,53 @@
     }
   }
 
-  loadWeather(); loadAirQuality();
+  function getMoonPhase(date){
+    const synodic = 29.530588853;
+    const knownNewMoon = Date.UTC(2000,0,6,18,14);
+    const diffDays = (date.getTime() - knownNewMoon) / 86400000;
+    let phase = (diffDays % synodic) / synodic;
+    if(phase < 0) phase += 1;
+    const phases = [
+      {max:0.03, name:'New Moon', emoji:'🌑'},
+      {max:0.22, name:'Waxing Crescent', emoji:'🌒'},
+      {max:0.28, name:'First Quarter', emoji:'🌓'},
+      {max:0.47, name:'Waxing Gibbous', emoji:'🌔'},
+      {max:0.53, name:'Full Moon', emoji:'🌕'},
+      {max:0.72, name:'Waning Gibbous', emoji:'🌖'},
+      {max:0.78, name:'Last Quarter', emoji:'🌗'},
+      {max:0.97, name:'Waning Crescent', emoji:'🌘'},
+      {max:1.01, name:'New Moon', emoji:'🌑'}
+    ];
+    return phases.find(p => phase <= p.max);
+  }
+
+  let lastAlertText = '';
+  async function loadAlerts(){
+    try{
+      const res = await fetch(`https://api.weather.gov/alerts/active?point=${LAT},${LON}`, {
+        headers: { 'Accept': 'application/geo+json' }
+      });
+      const data = await res.json();
+      const banner = document.getElementById('alertbanner');
+      if(!data.features || data.features.length === 0){
+        banner.style.display = 'none';
+        lastAlertText = '';
+        return;
+      }
+      const a = data.features[0].properties;
+      document.getElementById('alertHeadline').textContent = a.event;
+      document.getElementById('alertDetail').textContent = (a.headline || '') + (a.areaDesc ? ' — ' + a.areaDesc.split(';')[0] : '');
+      banner.style.display = 'block';
+    }catch(e){
+      document.getElementById('alertbanner').style.display = 'none';
+    }
+  }
+  function toggleAlertDetail(){ document.getElementById('alertbanner').classList.toggle('open'); }
+
+  loadWeather(); loadAirQuality(); loadAlerts();
   setInterval(loadWeather, 60*1000);
   setInterval(loadAirQuality, 60*1000);
+  setInterval(loadAlerts, 5*60*1000);
 
   // ---------------- map ----------------
   const map = L.map('map', {zoomControl:false, attributionControl:true, minZoom:3, maxZoom:16}).setView([LAT, LON], 8);
@@ -707,7 +829,8 @@
     subdomains: 'abc', maxZoom: 19, pane: 'basePane',
     attribution: '© OpenStreetMap'
   }).addTo(map);
-  L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
+  const homeMarker = L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
+  document.getElementById('zipinput').addEventListener('keydown', e => { if(e.key === 'Enter') searchZip(); });
 
   let mode = 'radar';
   let radarLayers = [];
@@ -742,7 +865,7 @@
         if(frames.length === 0) throw new Error('no nowcast frames');
         frames.forEach(f=>{
           radarFrameTimes.push(new Date(f.time*1000));
-          radarLayers.push(L.tileLayer(`${d.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane'}));
+          radarLayers.push(L.tileLayer(`${d.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {opacity:0, pane:'radarPane', maxNativeZoom:7}));
           radarLayers[radarLayers.length-1].on('tileerror', e => { e.tile.style.opacity = 0; });
         });
       }
