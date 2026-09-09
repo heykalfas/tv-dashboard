@@ -355,8 +355,8 @@
   <div class="header">
     <div class="place" id="place">Colorado Springs, CO 80924</div>
     <div class="searchbar">
-      <input id="zipinput" type="text" inputmode="numeric" placeholder="Change ZIP code" maxlength="10">
-      <button onclick="searchZip()">Go</button>
+      <input id="zipinput" type="text" placeholder="City or ZIP code" maxlength="40">
+      <button onclick="searchLocation()">Go</button>
     </div>
     <div class="clock"><span class="date" id="date"></span><span id="time">--:--</span></div>
   </div>
@@ -481,31 +481,43 @@
   let LON = parseFloat(localStorage.getItem('dash_lon')) || -104.7211;
   document.getElementById('place').textContent = localStorage.getItem('dash_place') || 'Colorado Springs, CO 80924';
 
-  async function searchZip(){
+  function applyLocation(lat, lon, label){
+    LAT = lat; LON = lon;
+    document.getElementById('place').textContent = label;
+    document.getElementById('zipinput').value = '';
+    localStorage.setItem('dash_lat', LAT);
+    localStorage.setItem('dash_lon', LON);
+    localStorage.setItem('dash_place', label);
+    map.setView([LAT, LON], map.getZoom());
+    homeMarker.setLatLng([LAT, LON]);
+    loadWeather(); loadAirQuality(); loadAlerts();
+    if(mode==='traffic') loadTraffic();
+  }
+
+  async function searchLocation(){
     const raw = document.getElementById('zipinput').value.trim();
-    if(!/^\d{5}$/.test(raw)){
-      document.getElementById('zipinput').placeholder = 'Enter a 5-digit ZIP';
+    if(!raw) return;
+    if(/^\d{5}$/.test(raw)){
+      try{
+        const res = await fetch(`https://api.zippopotam.us/us/${raw}`);
+        if(!res.ok) throw new Error('not found');
+        const data = await res.json();
+        const p = data.places[0];
+        applyLocation(parseFloat(p.latitude), parseFloat(p.longitude), `${p['place name']}, ${p['state abbreviation']} ${raw}`);
+      }catch(e){
+        document.getElementById('zipinput').placeholder = 'ZIP not found, try again';
+      }
       return;
     }
     try{
-      const res = await fetch(`https://api.zippopotam.us/us/${raw}`);
-      if(!res.ok) throw new Error('not found');
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(raw)}&count=1&language=en&format=json`);
       const data = await res.json();
-      const p = data.places[0];
-      LAT = parseFloat(p.latitude);
-      LON = parseFloat(p.longitude);
-      const label = `${p['place name']}, ${p['state abbreviation']} ${raw}`;
-      document.getElementById('place').textContent = label;
-      document.getElementById('zipinput').value = '';
-      localStorage.setItem('dash_lat', LAT);
-      localStorage.setItem('dash_lon', LON);
-      localStorage.setItem('dash_place', label);
-      map.setView([LAT, LON], map.getZoom());
-      homeMarker.setLatLng([LAT, LON]);
-      loadWeather(); loadAirQuality(); loadAlerts();
-      if(mode==='traffic') loadTraffic();
+      if(!data.results || data.results.length===0) throw new Error('not found');
+      const r = data.results[0];
+      const label = r.admin1 && r.country_code === 'US' ? `${r.name}, ${r.admin1}` : `${r.name}, ${r.country}`;
+      applyLocation(r.latitude, r.longitude, label);
     }catch(e){
-      document.getElementById('zipinput').placeholder = 'ZIP not found, try again';
+      document.getElementById('zipinput').placeholder = 'Location not found, try again';
     }
   }
 
@@ -870,7 +882,7 @@
     attribution: '© OpenStreetMap'
   }).addTo(map);
   const homeMarker = L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
-  document.getElementById('zipinput').addEventListener('keydown', e => { if(e.key === 'Enter') searchZip(); });
+  document.getElementById('zipinput').addEventListener('keydown', e => { if(e.key === 'Enter') searchLocation(); });
 
   let mode = 'radar';
   let radarLayers = [];
