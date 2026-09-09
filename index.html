@@ -306,6 +306,46 @@
 
   ::-webkit-scrollbar{ width:6px; }
   ::-webkit-scrollbar-thumb{ background:var(--line); border-radius:3px; }
+  /* ---------- phone layout ---------- */
+  @media (max-width: 820px){
+    html, body{ overflow-y:auto; overflow-x:hidden; height:auto; }
+    .app{
+      display:flex; flex-direction:column;
+      width:100%; height:auto; min-height:100vh;
+      padding:12px; gap:12px;
+    }
+    .header{ flex-wrap:wrap; row-gap:8px; }
+    .place{ font-size:17px; }
+    .searchbar{ order:3; width:100%; }
+    .searchbar input{ flex:1; width:auto; }
+    .clock{ font-size:17px; }
+
+    .panel{ padding:14px; }
+    .now .temp{ font-size:52px; }
+
+    .mapwrap{ height:360px; flex-shrink:0; }
+    .flightlist{ width:180px; font-size:11px; }
+
+    .side{
+      display:grid; grid-template-columns:1fr 1fr; gap:12px;
+    }
+    .side .stat{ flex:none; }
+    .stat .big{ font-size:26px; }
+
+    .forecast{ flex-direction:column; gap:14px; padding:14px; }
+    .hourly-wrap{ border-right:none; border-bottom:1px solid var(--line); padding:0 0 14px 0; }
+    .daily-wrap{ padding:0; }
+    .daily{ justify-content:flex-start; }
+
+    .footer{ flex-wrap:wrap; row-gap:10px; padding:14px; }
+    .spotify-login{ flex-wrap:wrap; }
+    .spotify-player{ flex-wrap:wrap; }
+    .sp-meta{ width:auto; flex:1 1 140px; }
+    .sp-volume{ order:5; width:100%; }
+    .plbtns{ margin-left:0; flex-wrap:wrap; }
+
+    .libPanel{ width:94vw; padding:16px; }
+  }
 </style>
 </head>
 <body>
