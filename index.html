@@ -199,6 +199,12 @@
     display:flex; justify-content:space-between; gap:8px;
   }
   .flightlist .flcount{ text-align:right; }
+  .flightlist .flhead{ cursor:pointer; user-select:none; align-items:center; }
+  .flightlist .flhead:hover{ color:var(--text); }
+  .flightlist .flchev{ display:inline-block; margin-left:6px; transition:transform .15s; }
+  .flightlist.collapsed .flchev{ transform:rotate(-90deg); }
+  .flightlist.collapsed #flightrows{ display:none; }
+  .flightlist.collapsed .flhead{ border-bottom:none; }
   .flightlist .flrow{ cursor:pointer; }
   .flightlist .flrow:hover, .flightlist .flrow.sel{ background:var(--surface-alt); }
   .flightlist .flrow.meta{ color:var(--text-dim); cursor:default; }
@@ -457,7 +463,7 @@
     <div id="map"></div>
     <div class="maplegend" id="legend">Precipitation radar · last hour</div>
     <div class="flightlist" id="flightlist">
-      <div class="flhead"><span>Flights nearby</span><span id="flcount" class="flcount"></span></div>
+      <div class="flhead" id="flhead" role="button" tabindex="0" aria-expanded="false"><span>Flights nearby<span class="flchev">▾</span></span><span id="flcount" class="flcount"></span></div>
       <div id="flightrows"></div>
     </div>
     <div class="planecard" id="planecard">
@@ -1435,8 +1441,26 @@
       : (r && r.status === 'ok' ? 'Route is matched by callsign and may differ from today\u2019s actual flight.' : '');
   }
 
+  let flToggleReady = false;
+  function setFlightListCollapsed(c){
+    const fl = document.getElementById('flightlist');
+    fl.classList.toggle('collapsed', c);
+    document.getElementById('flhead').setAttribute('aria-expanded', String(!c));
+    try{ localStorage.setItem('dash_fl_collapsed', c ? '1' : '0'); }catch(e){}
+  }
+  function initFlightListToggle(){
+    if(flToggleReady) return; flToggleReady = true;
+    let c = true;                                              // default: collapsed so the map stays clear
+    try{ if(localStorage.getItem('dash_fl_collapsed') === '0') c = false; }catch(e){}
+    setFlightListCollapsed(c);
+    const head = document.getElementById('flhead');
+    const flip = () => setFlightListCollapsed(!document.getElementById('flightlist').classList.contains('collapsed'));
+    head.addEventListener('click', flip);
+    head.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); flip(); } });
+  }
   function setMode(m){
     mode = m;
+    initFlightListToggle();
     document.getElementById('btn-radar').classList.toggle('active', m==='radar');
     document.getElementById('btn-traffic').classList.toggle('active', m==='traffic');
     document.getElementById('flightlist').classList.toggle('show', m==='traffic');
