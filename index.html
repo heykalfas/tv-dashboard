@@ -1196,7 +1196,11 @@
     C172:'Cessna 172', C182:'Cessna 182', C208:'Cessna 208 Caravan', C25A:'Cessna Citation CJ2', C25B:'Cessna Citation CJ3',
     SR22:'Cirrus SR22', SR20:'Cirrus SR20', PC12:'Pilatus PC-12', BE20:'Beechcraft King Air 200', BE9L:'Beechcraft King Air 90',
     PA28:'Piper Cherokee', GLF4:'Gulfstream IV', GLF5:'Gulfstream V', C130:'Lockheed C-130', C17:'Boeing C-17',
-    H60:'Sikorsky UH-60 Black Hawk', R44:'Robinson R44', EC35:'Airbus H135'
+    H60:'Sikorsky UH-60 Black Hawk', R44:'Robinson R44', EC35:'Airbus H135',
+    B753:'Boeing 757-300', LJ60:'Learjet 60', E550:'Embraer Legacy 500', CL30:'Bombardier Challenger 300',
+    F900:'Dassault Falcon 900', F2TH:'Dassault Falcon 2000', GL5T:'Bombardier Global 5000', C25C:'Cessna Citation CJ4',
+    DHC6:'De Havilland Twin Otter', AS50:'Airbus AS350 helicopter', PA18:'Piper Super Cub', PA25:'Piper Pawnee',
+    PA44:'Piper Seminole', BE65:'Beechcraft Queen Air', S22T:'Cirrus SR22T'
   };
   const PLANE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2 7 8 5v2l-8-2.5-.5 5.5 2.5 2v1l-4-1-4 1v-1l2.5-2-.5-5.5L2 16v-2l8-5z"/></svg>';
 
@@ -1244,6 +1248,15 @@
         return `https://opensky-network.org/api/states/all?lamin=${(la-dLat).toFixed(3)}&lomin=${(lo-dLon).toFixed(3)}&lamax=${(la+dLat).toFixed(3)}&lomax=${(lo+dLon).toFixed(3)}`;
     } }
   ];
+
+  // Browsers are not allowed to read these feeds directly (they don't send CORS headers for other websites).
+  // Paste the URL of your own free Cloudflare relay between the quotes (see adsb-relay-worker.js), e.g.
+  //   const TRAFFIC_PROXY = 'https://adsb-relay.yourname.workers.dev';
+  const TRAFFIC_PROXY = 'https://adsb-relay.kalfas-christopher.workers.dev';
+  if(TRAFFIC_PROXY){
+    TRAFFIC_SOURCES.unshift({ name:'relay', parse:parseReadsb,
+      url:(la,lo,nm) => `${TRAFFIC_PROXY.replace(/\/+$/, '')}/?lat=${la.toFixed(3)}&lon=${lo.toFixed(3)}&nm=${nm}` });
+  }
 
   let trafficPlanes = [], trafficSourceIdx = 0, trafficSourceName = '', trafficStatus = '';
   let trafficBusy = false, selectedPlaneId = null, selectedSnapshot = null;
@@ -1319,7 +1332,9 @@
     if(trafficStatus.startsWith('error:') && trafficPlanes.length === 0){
       const a = document.createElement('div'); a.className = 'flrow meta'; a.textContent = 'Flight data unavailable';
       const b = document.createElement('div'); b.className = 'flrow meta';
-      b.textContent = "Couldn't reach: " + trafficStatus.slice(6);
+      b.textContent = TRAFFIC_PROXY
+        ? "Relay and feeds all failed: " + trafficStatus.slice(6)
+        : "Browsers can't read these feeds directly. Set up the free relay (TRAFFIC_PROXY) to enable live flights.";
       rows.appendChild(a); rows.appendChild(b);
       count.textContent = '';
       renderPlaneCard();
@@ -1369,16 +1384,11 @@
     if(!cs || routeCache.has(cs)) return;
     routeCache.set(cs, { status:'loading' });
     try{
-      const res = await fetch('https://api.adsb.lol/api/0/routeset', {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ planes:[{ callsign: cs, lat: p.lat, lng: p.lon }] })
-      });
-      if(!res.ok) throw new Error('HTTP ' + res.status);
-      const body = await res.json();
-      const r = Array.isArray(body) ? body[0] : body;
-      const ap = (r && r._airports) || [];
-      if(!r || r.plausible === false || ap.length < 2) throw new Error('no route');
-      routeCache.set(cs, { status:'ok', from: ap[0], to: ap[ap.length - 1] });
+      const res = await fetchJsonTimeout('https://api.adsbdb.com/v0/callsign/' + encodeURIComponent(cs), 8000);
+      const fr = res && res.response && res.response.flightroute;
+      if(!fr || !fr.origin || !fr.destination) throw new Error('no route');
+      const shape = a => ({ iata:a.iata_code, icao:a.icao_code, location:a.municipality, name:a.name });
+      routeCache.set(cs, { status:'ok', from:shape(fr.origin), to:shape(fr.destination), airline: fr.airline && fr.airline.name });
     }catch(e){
       routeCache.set(cs, { status:'none' });
     }
@@ -1396,8 +1406,9 @@
     if(live) selectedSnapshot = live;
     card.classList.add('show'); wrap.classList.add('hasCard');
 
+    const rt = p.callsign ? routeCache.get(p.callsign) : null;
     document.getElementById('pcsign').textContent = planeName(p);
-    document.getElementById('pcsub').textContent = [planeTypeName(p), p.reg].filter(Boolean).join(' · ') || 'Aircraft details unavailable';
+    document.getElementById('pcsub').textContent = [rt && rt.airline, planeTypeName(p), p.reg].filter(Boolean).join(' · ') || 'Aircraft details unavailable';
     document.getElementById('pcalt').textContent = fmtAlt(p);
     document.getElementById('pcspd').textContent = fmtSpd(p);
     document.getElementById('pchdg').textContent = Math.round(p.track) + '° ' + compass(p.track);
@@ -1420,7 +1431,8 @@
       sub.textContent = `${r.from.location || r.from.name || ''} to ${r.to.location || r.to.name || ''}`;
     } else { main.textContent = 'Route not available'; }
     routeEl.appendChild(main); if(sub.textContent) routeEl.appendChild(sub);
-    document.getElementById('pcnote').textContent = live ? '' : 'Out of range or signal lost — showing last known data';
+    document.getElementById('pcnote').textContent = !live ? 'Out of range or signal lost — showing last known data'
+      : (r && r.status === 'ok' ? 'Route is matched by callsign and may differ from today\u2019s actual flight.' : '');
   }
 
   function setMode(m){
