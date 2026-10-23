@@ -51,7 +51,23 @@
     font-size:22px; font-weight:600; letter-spacing:0.2px;
   }
   .place span{ color:var(--text-dim); font-weight:500; font-size:16px; margin-left:8px;}
-  .searchbar{ display:flex; gap:8px; align-items:center; }
+  .searchbar{ display:flex; gap:8px; align-items:center; position:relative; }
+  .suggest{
+    display:none; position:absolute; top:calc(100% + 6px); left:0; z-index:3000;
+    width:max(100%, 260px); max-height:320px; overflow-y:auto;
+    background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 10px 30px rgba(0,0,0,0.45);
+  }
+  .suggest.show{ display:block; }
+  .suggest .sopt{
+    padding:10px 14px; font-size:14px; cursor:pointer;
+    border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:12px;
+  }
+  .suggest .sopt:last-child{ border-bottom:none; }
+  .suggest .sopt:hover, .suggest .sopt.active{ background:var(--surface-alt); }
+  .suggest .sopt .sname{ font-weight:500; }
+  .suggest .sopt .ssub{ color:var(--text-dim); font-size:12px; white-space:nowrap; }
+  .suggest .snone{ padding:10px 14px; font-size:13px; color:var(--text-dim); }
   .searchbar input{
     background:var(--surface); border:1px solid var(--line); color:var(--text);
     font-family:'Inter',sans-serif; font-size:13px; padding:8px 14px;
@@ -154,6 +170,7 @@
     font-size:10px !important; border-radius:6px 0 0 0 !important;
   }
   .leaflet-control-attribution a{ color:var(--text-dim) !important; }
+  .tiles-dark{ filter: invert(93%) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.7); }
   .maplegend{
     position:absolute; bottom:14px; left:14px; z-index:500;
     background:rgba(15,21,28,0.85); border:1px solid var(--line);
@@ -356,8 +373,9 @@
   <div class="header">
     <div class="place" id="place">Colorado Springs, CO 80924</div>
     <div class="searchbar">
-      <input id="zipinput" type="text" placeholder="City or ZIP code" maxlength="40">
+      <input id="zipinput" type="text" placeholder="City or ZIP code" maxlength="40" autocomplete="off" autocapitalize="words" spellcheck="false">
       <button onclick="searchLocation()">Go</button>
+      <div class="suggest" id="suggest" role="listbox"></div>
     </div>
     <div class="clock"><span class="date" id="date"></span><span id="time">--:--</span></div>
   </div>
@@ -495,32 +513,144 @@
     if(mode==='traffic') loadTraffic();
   }
 
-  async function searchLocation(){
-    const raw = document.getElementById('zipinput').value.trim();
-    if(!raw) return;
-    if(/^\d{5}$/.test(raw)){
-      try{
-        const res = await fetch(`https://api.zippopotam.us/us/${raw}`);
-        if(!res.ok) throw new Error('not found');
-        const data = await res.json();
-        const p = data.places[0];
-        applyLocation(parseFloat(p.latitude), parseFloat(p.longitude), `${p['place name']}, ${p['state abbreviation']} ${raw}`);
-      }catch(e){
-        document.getElementById('zipinput').placeholder = 'ZIP not found, try again';
+  // ---------------- location search + autocomplete ----------------
+  const US_STATES = {
+    'Alabama':'AL','Alaska':'AK','Arizona':'AZ','Arkansas':'AR','California':'CA','Colorado':'CO','Connecticut':'CT',
+    'Delaware':'DE','District of Columbia':'DC','Florida':'FL','Georgia':'GA','Hawaii':'HI','Idaho':'ID','Illinois':'IL',
+    'Indiana':'IN','Iowa':'IA','Kansas':'KS','Kentucky':'KY','Louisiana':'LA','Maine':'ME','Maryland':'MD',
+    'Massachusetts':'MA','Michigan':'MI','Minnesota':'MN','Mississippi':'MS','Missouri':'MO','Montana':'MT',
+    'Nebraska':'NE','Nevada':'NV','New Hampshire':'NH','New Jersey':'NJ','New Mexico':'NM','New York':'NY',
+    'North Carolina':'NC','North Dakota':'ND','Ohio':'OH','Oklahoma':'OK','Oregon':'OR','Pennsylvania':'PA',
+    'Rhode Island':'RI','South Carolina':'SC','South Dakota':'SD','Tennessee':'TN','Texas':'TX','Utah':'UT',
+    'Vermont':'VT','Virginia':'VA','Washington':'WA','West Virginia':'WV','Wisconsin':'WI','Wyoming':'WY',
+    'Puerto Rico':'PR'
+  };
+  let suggestItems = [], suggestIdx = -1, suggestSeq = 0, suggestTimer = null;
+  const zipInput = document.getElementById('zipinput');
+  const suggestBox = document.getElementById('suggest');
+
+  function fmtPlace(r){
+    if(r.country_code === 'US' && r.admin1) return `${r.name}, ${US_STATES[r.admin1] || r.admin1}`;
+    const region = (r.admin1 && r.admin1 !== r.name) ? `${r.admin1}, ` : '';
+    return `${r.name}, ${region}${r.country || r.country_code || ''}`.replace(/, $/, '');
+  }
+
+  async function fetchSuggestions(q){
+    if(/^\d{5}$/.test(q)){
+      const res = await fetch(`https://api.zippopotam.us/us/${q}`);
+      if(!res.ok) return [];
+      const data = await res.json();
+      const p = data.places[0];
+      return [{ label:`${p['place name']}, ${p['state abbreviation']} ${q}`, sub:'ZIP code',
+                lat:parseFloat(p.latitude), lon:parseFloat(p.longitude) }];
+    }
+    if(q.length < 3) return [];
+    const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=20&language=en&format=json`);
+    const data = await res.json();
+    const results = data.results || [];
+    // US matches first, then everything else; each group keeps the service's own ranking
+    const ordered = results.filter(r => r.country_code === 'US').concat(results.filter(r => r.country_code !== 'US'));
+    const seen = new Set();
+    const out = [];
+    for(const r of ordered){
+      const label = fmtPlace(r);
+      const sub = r.admin2 || '';
+      const key = label + '|' + sub;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      out.push({ label, sub, lat:r.latitude, lon:r.longitude });
+      if(out.length >= 8) break;
+    }
+    return out;
+  }
+
+  function hideSuggest(){
+    suggestBox.classList.remove('show');
+    suggestBox.innerHTML = '';
+    suggestItems = []; suggestIdx = -1;
+  }
+
+  function renderSuggest(items, emptyMsg){
+    suggestBox.innerHTML = '';
+    suggestItems = items; suggestIdx = -1;
+    if(items.length === 0){
+      if(emptyMsg){
+        const d = document.createElement('div');
+        d.className = 'snone'; d.textContent = emptyMsg;
+        suggestBox.appendChild(d);
+        suggestBox.classList.add('show');
+      } else {
+        suggestBox.classList.remove('show');
       }
       return;
     }
+    items.forEach((it, i) => {
+      const row = document.createElement('div');
+      row.className = 'sopt'; row.setAttribute('role','option');
+      const n = document.createElement('span'); n.className = 'sname'; n.textContent = it.label;
+      const s = document.createElement('span'); s.className = 'ssub'; s.textContent = it.sub;
+      row.appendChild(n); row.appendChild(s);
+      // mousedown (not click) so it fires before the input loses focus
+      row.addEventListener('mousedown', e => { e.preventDefault(); pickSuggestion(it); });
+      suggestBox.appendChild(row);
+    });
+    suggestBox.classList.add('show');
+  }
+
+  function highlightSuggest(i){
+    const rows = suggestBox.querySelectorAll('.sopt');
+    rows.forEach(r => r.classList.remove('active'));
+    suggestIdx = i;
+    if(i >= 0 && rows[i]){ rows[i].classList.add('active'); rows[i].scrollIntoView({block:'nearest'}); }
+  }
+
+  function pickSuggestion(it){
+    hideSuggest();
+    zipInput.blur();
+    applyLocation(it.lat, it.lon, it.label);
+  }
+
+  function onSearchInput(){
+    const q = zipInput.value.trim();
+    clearTimeout(suggestTimer);
+    if(q.length < 3 && !/^\d{5}$/.test(q)){ suggestSeq++; hideSuggest(); return; }
+    suggestTimer = setTimeout(async () => {
+      const mySeq = ++suggestSeq;
+      try{
+        const items = await fetchSuggestions(q);
+        if(mySeq !== suggestSeq) return;   // a newer keystroke superseded this lookup
+        renderSuggest(items, 'No matches found');
+      }catch(e){
+        if(mySeq !== suggestSeq) return;
+        renderSuggest([], 'Search unavailable right now');
+      }
+    }, 250);
+  }
+
+  async function searchLocation(){
+    const raw = zipInput.value.trim();
+    if(!raw) return;
+    if(suggestIdx >= 0 && suggestItems[suggestIdx]){ pickSuggestion(suggestItems[suggestIdx]); return; }
     try{
-      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(raw)}&count=1&language=en&format=json`);
-      const data = await res.json();
-      if(!data.results || data.results.length===0) throw new Error('not found');
-      const r = data.results[0];
-      const label = r.admin1 && r.country_code === 'US' ? `${r.name}, ${r.admin1}` : `${r.name}, ${r.country}`;
-      applyLocation(r.latitude, r.longitude, label);
+      const items = await fetchSuggestions(raw);
+      if(items.length === 0) throw new Error('not found');
+      pickSuggestion(items[0]);
     }catch(e){
-      document.getElementById('zipinput').placeholder = 'Location not found, try again';
+      zipInput.value = '';
+      zipInput.placeholder = /^\d{5}$/.test(raw) ? 'ZIP not found, try again' : 'Location not found, try again';
+      hideSuggest();
     }
   }
+
+  zipInput.addEventListener('input', onSearchInput);
+  zipInput.addEventListener('focus', () => { if(suggestItems.length) suggestBox.classList.add('show'); });
+  zipInput.addEventListener('blur', () => { setTimeout(() => suggestBox.classList.remove('show'), 120); });
+  zipInput.addEventListener('keydown', e => {
+    if(e.key === 'ArrowDown'){ e.preventDefault(); if(suggestItems.length) highlightSuggest((suggestIdx + 1) % suggestItems.length); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); if(suggestItems.length) highlightSuggest((suggestIdx - 1 + suggestItems.length) % suggestItems.length); }
+    else if(e.key === 'Escape'){ hideSuggest(); }
+    else if(e.key === 'Enter'){ e.preventDefault(); searchLocation(); }
+  });
 
   // ---------------- clock ----------------
   function tick(){
@@ -873,18 +1003,35 @@
 
   map.createPane('basePane');
   map.getPane('basePane').style.zIndex = 200;
-  map.getPane('basePane').style.filter = 'invert(93%) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.7)';
-
   map.createPane('radarPane');
   map.getPane('radarPane').style.zIndex = 300;
+  map.createPane('labelPane');                       // place names sit above the radar
+  map.getPane('labelPane').style.zIndex = 350;
+  map.getPane('labelPane').style.pointerEvents = 'none';
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    subdomains: 'abc', maxZoom: 19, pane: 'basePane',
-    attribution: '© OpenStreetMap'
+  // Base map: Esri's dark-gray canvas (no API key) + a separate labels layer.
+  const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+  let baseLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+    pane:'basePane', maxNativeZoom:16, maxZoom:16, attribution:'Tiles © Esri'
   }).addTo(map);
-  const homeMarker = L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
-  document.getElementById('zipinput').addEventListener('keydown', e => { if(e.key === 'Enter') searchLocation(); });
+  let labelLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, {
+    pane:'labelPane', maxNativeZoom:16, maxZoom:16
+  }).addTo(map);
 
+  // Safety net: if the dark canvas never loads a single tile, fall back to Esri's street map (darkened with CSS)
+  let baseLoaded = false, baseErrors = 0, usedFallback = false;
+  baseLayer.on('tileload', () => { baseLoaded = true; });
+  baseLayer.on('tileerror', () => {
+    baseErrors++;
+    if(!baseLoaded && baseErrors >= 6 && !usedFallback){
+      usedFallback = true;
+      map.removeLayer(baseLayer); map.removeLayer(labelLayer);
+      L.tileLayer(`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`, {
+        pane:'basePane', maxNativeZoom:19, maxZoom:19, className:'tiles-dark', attribution:'Tiles © Esri'
+      }).addTo(map);
+    }
+  });
+  const homeMarker = L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
   let mode = 'radar';
   let radarLayers = [];
   let radarFrameTimes = [];
