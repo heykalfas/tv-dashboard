@@ -171,6 +171,7 @@
   }
   .leaflet-control-attribution a{ color:var(--text-dim) !important; }
   .tiles-dark{ filter: invert(93%) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.7); }
+  .toggle.active.detail{ background:var(--surface-alt); color:var(--text); border-color:var(--text-dim); }
   .maplegend{
     position:absolute; bottom:14px; left:14px; z-index:500;
     background:rgba(15,21,28,0.85); border:1px solid var(--line);
@@ -401,6 +402,7 @@
     <div class="maptop">
       <div class="toggle active" id="btn-radar" onclick="setMode('radar')">Radar</div>
       <div class="toggle traffic" id="btn-traffic" onclick="setMode('traffic')">Air Traffic</div>
+      <div class="toggle detail" id="btn-detail" onclick="toggleDetail()" title="Show roads, parks and terrain">Map detail</div>
     </div>
     <div class="radarsub" id="radarsub">
       <div class="subtoggle active" id="btn-past" onclick="setRadarSource('past')">Past hour</div>
@@ -1009,28 +1011,49 @@
   map.getPane('labelPane').style.zIndex = 350;
   map.getPane('labelPane').style.pointerEvents = 'none';
 
-  // Base map: Esri's dark-gray canvas (no API key) + a separate labels layer.
+  // Base map (Esri, no API key). Two styles:
+  //   detail  = street map (roads, parks, terrain features) darkened with CSS
+  //   minimal = Esri's dark-gray canvas + a separate labels layer (clean, but no roads)
   const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
-  let baseLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
-    pane:'basePane', maxNativeZoom:16, maxZoom:16, attribution:'Tiles © Esri'
-  }).addTo(map);
-  let labelLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, {
-    pane:'labelPane', maxNativeZoom:16, maxZoom:16
-  }).addTo(map);
+  let baseStyle = localStorage.getItem('dash_basemap') === 'minimal' ? 'minimal' : 'detail';
+  let baseLayer = null, labelLayer = null, autoSwitched = false;
 
-  // Safety net: if the dark canvas never loads a single tile, fall back to Esri's street map (darkened with CSS)
-  let baseLoaded = false, baseErrors = 0, usedFallback = false;
-  baseLayer.on('tileload', () => { baseLoaded = true; });
-  baseLayer.on('tileerror', () => {
-    baseErrors++;
-    if(!baseLoaded && baseErrors >= 6 && !usedFallback){
-      usedFallback = true;
-      map.removeLayer(baseLayer); map.removeLayer(labelLayer);
-      L.tileLayer(`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`, {
-        pane:'basePane', maxNativeZoom:19, maxZoom:19, className:'tiles-dark', attribution:'Tiles © Esri'
+  function setBaseStyle(style, persist){
+    if(baseLayer){ map.removeLayer(baseLayer); baseLayer = null; }
+    if(labelLayer){ map.removeLayer(labelLayer); labelLayer = null; }
+    baseStyle = style;
+    if(persist){ try{ localStorage.setItem('dash_basemap', style); }catch(e){} }
+
+    if(style === 'minimal'){
+      baseLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+        pane:'basePane', maxNativeZoom:16, maxZoom:16, attribution:'Tiles © Esri'
+      });
+      labelLayer = L.tileLayer(`${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, {
+        pane:'labelPane', maxNativeZoom:16, maxZoom:16
       }).addTo(map);
+    } else {
+      baseLayer = L.tileLayer(`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`, {
+        pane:'basePane', maxNativeZoom:19, maxZoom:19, className:'tiles-dark', attribution:'Tiles © Esri'
+      });
     }
-  });
+
+    // Safety net: if this style never loads a single tile, switch to the other one (once)
+    let loaded = false, errors = 0;
+    baseLayer.on('tileload', () => { loaded = true; });
+    baseLayer.on('tileerror', () => {
+      errors++;
+      if(!loaded && errors >= 6 && !autoSwitched){
+        autoSwitched = true;
+        setBaseStyle(style === 'minimal' ? 'detail' : 'minimal', false);
+      }
+    });
+    baseLayer.addTo(map);
+
+    const btn = document.getElementById('btn-detail');
+    if(btn) btn.classList.toggle('active', baseStyle === 'detail');
+  }
+  function toggleDetail(){ setBaseStyle(baseStyle === 'detail' ? 'minimal' : 'detail', true); }
+  setBaseStyle(baseStyle, false);
   const homeMarker = L.circleMarker([LAT, LON], {radius:5, color:'#E3A23B', fillColor:'#E3A23B', fillOpacity:1, weight:2}).addTo(map);
   let mode = 'radar';
   let radarLayers = [];
